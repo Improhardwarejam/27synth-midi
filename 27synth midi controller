@@ -1,0 +1,91 @@
+#include <MozziGuts.h>
+#include <Oscil.h>  // Oscillator for sine wave
+#include <CapacitiveSensor.h>
+#include <MIDI.h>  // MIDI library
+
+// Define the audio output pin (GPIO 0 for PWM audio)
+#define AUDIO_OUTPUT_PIN 0
+
+// Define touch sensor pins (GPIO 2 to GPIO 28 as example, total 27 touch pads)
+#define NUM_PADS 27
+int touchPins[NUM_PADS] = {
+  2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28
+};
+
+CapacitiveSensor touchSensors[NUM_PADS];
+
+// Frequencies for touch pads (C4 to B4, etc.)
+float frequencies[NUM_PADS] = {
+  261.63,  // C4
+  277.18,  // C#4
+  293.66,  // D4
+  311.13,  // D#4
+  329.63,  // E4
+  349.23,  // F4
+  369.99,  // F#4
+  392.00,  // G4
+  415.30,  // G#4
+  440.00,  // A4
+  466.16,  // A#4
+  493.88,  // B4
+  523.25,  // C5
+  554.37,  // C#5
+  587.33,  // D5
+  622.25,  // D#5
+  659.26,  // E5
+  698.46,  // F5
+  739.99,  // F#5
+  783.99,  // G5
+  830.61,  // G#5
+  880.00,  // A5
+  932.33,  // A#5
+  987.77,  // B5
+  1046.50, // C6
+  1108.73, // C#6
+  1174.66  // D6
+};
+
+// Array of oscillators (one for each active note)
+Oscil<SIN2059> oscillators[NUM_PADS]; // Oscillator for each note (sine wave)
+bool noteActive[NUM_PADS] = { false };  // Track if note is active
+MIDI_CREATE_DEFAULT_INSTANCE();  // Create default MIDI instance
+
+void setup() {
+  // Initialize touch sensors
+  for (int i = 0; i < NUM_PADS; i++) {
+    touchSensors[i] = CapacitiveSensor(touchPins[i], touchPins[i]);
+    oscillators[i].setFreq(frequencies[i]);  // Set initial frequency for each oscillator
+  }
+  
+  // Initialize Mozzi for audio output
+  AudioOutput.begin(AUDIO_OUTPUT_PIN);
+  MIDI.begin(MIDI_CHANNEL_OMNI);  // Initialize MIDI
+  Serial.begin(31250); // Default MIDI baud rate (31250)
+}
+
+void loop() {
+  audioHook();  // Call Mozzi's audio processing function
+
+  // Check each touch pad and manage polyphony
+  for (int i = 0; i < NUM_PADS; i++) {
+    long sensorValue = touchSensors[i].capacitiveSensor(30);  // Read touch sensor value
+    
+    if (sensorValue > 1000 && !noteActive[i]) {  // If touched and note is not active
+      noteActive[i] = true;  // Mark the note as active
+      oscillators[i].setFreq(frequencies[i]);  // Set the oscillator frequency for the note
+      MIDI.sendNoteOn(i + 60, 127);  // Send MIDI note on (60 is middle C, adjust accordingly)
+    } else if (sensorValue <= 1000 && noteActive[i]) {  // If not touched and note is active
+      noteActive[i] = false;  // Mark the note as inactive
+      MIDI.sendNoteOff(i + 60, 0);  // Send MIDI note off
+    }
+  }
+
+  // Output the audio for all active notes (polyphony)
+  int audioOut = 0;
+  for (int i = 0; i < NUM_PADS; i++) {
+    if (noteActive[i]) {
+      audioOut += oscillators[i].next();  // Mix the active oscillators
+    }
+  }
+  AudioOutput.write(audioOut);  // Send the mixed audio output
+}
